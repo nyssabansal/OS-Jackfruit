@@ -522,6 +522,22 @@ static int run_supervisor(const char *rootfs)
             }
         }
 
+		else if (req.kind == CMD_LOGS) {
+		    char path[256];
+		    snprintf(path, sizeof(path), "logs/%s.log", req.container_id);
+		
+		    int fd = open(path, O_RDONLY);
+		    if (fd < 0) {
+		        write(client_fd, "No logs\n", 8);
+		    } else {
+		        char buf[512];
+		        int n;
+		        while ((n = read(fd, buf, sizeof(buf))) > 0)
+		            write(client_fd, buf, n);
+		        close(fd);
+		    }
+		}
+
         close(client_fd);
     }
 
