@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements a minimal container runtime in user space using a supervisor-based architecture. It demonstrates core concepts behind containerization, including process isolation, inter-process communication (IPC), and resource monitoring.
+This project implements a minimal container runtime in user space using a supervisor-based architecture. It demonstrates core concepts of containerization including process isolation, inter-process communication (IPC), logging, and kernel-level resource monitoring.
 
 ---
 
@@ -13,7 +13,7 @@ CLI (engine commands)
         ↓
 UNIX Domain Socket (IPC)
         ↓
-Supervisor Process
+Supervisor Process (long-running)
         ↓
 Container Processes (chrooted)
         ↓
@@ -25,16 +25,17 @@ Logs + Kernel Monitor
 ## Features
 
 * Container creation using `fork()` and `chroot()`
-* Supervisor-based container management
+* Supervisor-based lifecycle management
 * UNIX domain socket IPC for control-plane communication
-* Per-container logging (`logs/<id>.log`)
-* Container lifecycle management:
+* Per-container logging (`logs/<container_id>.log`)
+* Kernel module integration via `/dev/container_monitor`
+* Supported commands:
 
-  * start
-  * run
-  * ps
-  * stop
-* Kernel monitor integration via `/dev/container_monitor`
+  * `start`
+  * `run`
+  * `ps`
+  * `stop`
+  * `logs`
 
 ---
 
@@ -46,16 +47,26 @@ Logs + Kernel Monitor
 sudo ./engine supervisor rootfs-base
 ```
 
+---
+
 ### Start Container
 
 ```bash
-sudo ./engine start <id> <rootfs> <command>
+sudo ./engine start <id> <container-rootfs> <command>
 ```
 
 Example:
 
 ```bash
 sudo ./engine start alpha rootfs-alpha /cpu_hog
+```
+
+---
+
+### Run Container (foreground)
+
+```bash
+sudo ./engine run <id> <container-rootfs> <command>
 ```
 
 ---
@@ -86,49 +97,110 @@ cat logs/<id>.log
 
 ## Implementation Details
 
-### IPC
+### IPC (Control Plane)
 
 * Implemented using UNIX domain sockets (`/tmp/mini_runtime.sock`)
-* Client sends `control_request_t`
-* Supervisor processes and responds
+* CLI sends structured `control_request_t` messages
+* Supervisor processes requests and sends responses back
+
+---
 
 ### Supervisor
 
-* Long-running process
-* Maintains container metadata (linked list)
-* Handles all lifecycle operations
+* Persistent process that manages all containers
+* Maintains container metadata using a linked list
+* Handles lifecycle commands (`start`, `ps`, `stop`, etc.)
+
+---
 
 ### Container Execution
 
-* Uses `fork()` + `chroot()` for isolation
-* Executes command inside container filesystem
+* Containers are created using `fork()` and `chroot()`
+* This implementation uses `fork()` instead of `clone()` for simplicity while maintaining correct container semantics
+* Each container runs a command inside its isolated filesystem
+
+---
 
 ### Logging
 
-* Output redirected using `dup2()`
-* Stored in per-container log files
+* Implemented using file descriptor redirection (`dup2()`)
+* Each container writes output to:
+
+```
+logs/<container_id>.log
+```
+
+---
 
 ### Monitoring
 
-* Uses ioctl interface to communicate with kernel module
-* Registers container PID and memory limits
+* Uses a kernel module via `/dev/container_monitor`
+* Containers are registered using `ioctl`
+* Supports soft and hard memory limits
 
 ---
 
 ## Limitations
 
 * Uses `chroot()` instead of full namespace isolation
-* No persistent storage of container state across supervisor restarts
-* Simplified logging (no bounded buffer implementation)
+* Does not implement `clone()` with PID/mount namespaces
+* Logging uses direct file redirection instead of bounded buffer
+* No persistent container state after supervisor restart
+* Graceful shutdown handling is minimal
 
 ---
 
 ## Future Improvements
 
-* Use `clone()` with namespaces (PID, mount, UTS)
-* Implement bounded buffer logging
-* Add persistent metadata storage
+* Implement `clone()` with namespaces (PID, mount, UTS)
+* Add bounded buffer logging with producer-consumer model
+* Persist container metadata across restarts
 * Improve signal handling and graceful shutdown
+* Add more advanced resource scheduling
+
+---
+
+## How to Run
+
+### 1. Start Supervisor
+
+```bash
+sudo ./engine supervisor rootfs-base
+```
+
+### 2. Start a Container
+
+```bash
+sudo ./engine start alpha rootfs-alpha /cpu_hog
+```
+
+### 3. List Containers
+
+```bash
+sudo ./engine ps
+```
+
+### 4. Stop Container
+
+```bash
+sudo ./engine stop alpha
+```
+
+### 5. View Logs
+
+```bash
+cat logs/alpha.log
+```
+
+---
+
+## Key Learnings
+
+* Designing a supervisor-based container runtime
+* Implementing IPC using UNIX domain sockets
+* Managing process lifecycle in Linux
+* File descriptor manipulation for logging
+* Kernel-user space interaction using ioctl
 
 ---
 
