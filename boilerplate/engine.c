@@ -434,60 +434,64 @@ static int run_supervisor(const char *rootfs)
 	}
 
         // ================= START / RUN =================
-        if (req.kind == CMD_START || req.kind == CMD_RUN) {
-            pid_t pid = fork();
+	if (req.kind == CMD_START || req.kind == CMD_RUN) {
+	    pid_t pid = fork();
 
-            if (pid == 0) {
-                // CHILD (container)
+	    if (pid == 0) {
+		// ===== CHILD PROCESS =====
 
-                if (chroot(req.rootfs) != 0) {
-                    perror("chroot failed");
-                    exit(1);
-                }
+		if (chroot(req.rootfs) != 0) {
+		    perror("chroot failed");
+		    exit(1);
+		}
 
-                if (chdir("/") != 0) {
-                    perror("chdir failed");
-                    exit(1);
-                }
+		if (chdir("/") != 0) {
+		    perror("chdir failed");
+		    exit(1);
+		}
 
-                // logging
-                char log_path[256];
-                snprintf(log_path, sizeof(log_path), "logs/%s.log", req.container_id);
+		// ensure logs directory exists INSIDE container
+		mkdir("/logs", 0755);
 
-                int fd = open(log_path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-                if (fd >= 0) {
-                    dup2(fd, STDOUT_FILENO);
-                    dup2(fd, STDERR_FILENO);
-                    close(fd);
-                }
+		// logging setup
+		char log_path[256];
+		snprintf(path, "rootfs-alpha/logs/%s.log", req.container_id);	
 
-                execl(req.command, req.command, NULL);
-                perror("exec failed");
-                exit(1);
-            } else {
-                // PARENT (supervisor)
+		int fd = open(log_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+		if (fd >= 0) {
+		    dup2(fd, STDOUT_FILENO);
+		    dup2(fd, STDERR_FILENO);
+		    close(fd);
+		}
 
-                printf("Started %s (PID %d)\n", req.container_id, pid);
+		// IMPORTANT: use shell so commands work
+		execl("/bin/sh", "sh", "-c", req.command, NULL);
 
-                // store container
-                container_record_simple_t *c = malloc(sizeof(*c));
-                strncpy(c->id, req.container_id, sizeof(c->id) - 1);
-                c->id[sizeof(c->id) - 1] = '\0';
-                c->pid = pid;
-                c->next = containers;
-                containers = c;
+		perror("exec failed");
+		exit(1);
+	    } else {
+		// ===== PARENT PROCESS =====
 
-                // register with monitor
-                int mfd = open("/dev/container_monitor", O_RDWR);
-                if (mfd >= 0) {
-                    register_with_monitor(mfd, req.container_id, pid,
-                                          req.soft_limit_bytes,
-                                          req.hard_limit_bytes);
-                    close(mfd);
-                }
-            }
-        }
+		printf("Started %s (PID %d)\n", req.container_id, pid);
 
+		// store container
+		container_record_simple_t *c = malloc(sizeof(*c));
+		strncpy(c->id, req.container_id, sizeof(c->id) - 1);
+		c->id[sizeof(c->id) - 1] = '\0';
+		c->pid = pid;
+		c->next = containers;
+		containers = c;
+
+		// register with monitor
+		int mfd = open("/dev/container_monitor", O_RDWR);
+		if (mfd >= 0) {
+		    register_with_monitor(mfd, req.container_id, pid,
+		                          req.soft_limit_bytes,
+		                          req.hard_limit_bytes);
+		    close(mfd);
+		}
+	    }
+	}
         // ================= PS =================
         else if (req.kind == CMD_PS) {
 	    char buffer[1024] = {0};
